@@ -1,9 +1,3 @@
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-import plotly.io as pio
-
-
 def df_to_html_plots(df, time_col='time', output_file='report.html'):
     """
     Export DataFrame to HTML with interactive plots.
@@ -71,17 +65,25 @@ def df_to_html_plots(df, time_col='time', output_file='report.html'):
             marker=dict(size=6)
         ))
         
-        # Create frames for each time step
+        # For large datasets, reduce number of frames (max ~500 frames)
+        n_times_total = len(times)
+        if n_times_total > 500:
+            frame_step = n_times_total // 500
+            frame_indices = list(range(0, n_times_total, frame_step))
+        else:
+            frame_indices = list(range(n_times_total))
+        
+        # Create frames for animation
         frames = [go.Frame(data=[go.Scatter(x=x_vals, y=all_data[i])], name=str(i)) 
-                  for i in range(len(times))]
+                  for i in frame_indices]
         fig.frames = frames
         
-        # Create slider steps
+        # Slider steps match the frame indices
         steps = [dict(
             args=[[str(i)], dict(frame=dict(duration=0, redraw=True), mode='immediate')],
-            label=f"{times[i]:.2f}" if isinstance(times[i], float) else str(times[i]), 
+            label=f"{times[i]:.1f}" if isinstance(times[i], float) else str(times[i]), 
             method='animate'
-        ) for i in range(len(times))]
+        ) for i in frame_indices]
         
         fig.update_layout(
             title=col,
@@ -93,7 +95,12 @@ def df_to_html_plots(df, time_col='time', output_file='report.html'):
                 type='buttons', showactive=False, y=-0.15, x=0.1,
                 buttons=[
                     dict(label='▶ Play', method='animate',
-                         args=[None, dict(frame=dict(duration=300, redraw=True), fromcurrent=True)]),
+                         args=[None, dict(
+                             frame=dict(duration=50, redraw=True),
+                             transition=dict(duration=30, easing='linear'),
+                             fromcurrent=True,
+                             mode='immediate'
+                         )]),
                     dict(label='⏸ Pause', method='animate',
                          args=[[None], dict(frame=dict(duration=0), mode='immediate')])
                 ]
@@ -105,6 +112,7 @@ def df_to_html_plots(df, time_col='time', output_file='report.html'):
                 len=0.8,
                 x=0.1,
                 y=-0.05,
+                transition=dict(duration=30, easing='linear'),
                 steps=steps
             )]
         )
@@ -118,6 +126,11 @@ body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
 h1 { text-align: center; }
 h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; margin-top: 40px; }
 .plot-container { background: white; border-radius: 8px; padding: 15px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+
+/* Hover effects for Plotly buttons */
+.modebar-btn:hover { background-color: #ddd !important; }
+.updatemenu-button:hover { background-color: #e0e0e0 !important; cursor: pointer !important; }
+.slider-grip:hover { fill: #888 !important; cursor: grab !important; }
 </style>
 </head><body>
 <h1>Data Report</h1>
@@ -149,26 +162,3 @@ h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; margin-top
         f.write(html)
     
     print(f"Saved to {output_file}")
-
-
-# =========================
-# TEST
-# =========================
-if __name__ == "__main__":
-    
-    # Test data with BOTH scalar and array columns
-    test = {
-        'time': [0, 1, 2],
-        'x_own': [[1, 2, 3], [2, 3, 4], [3, 4, 5]],  # array - gets time slider
-        'y_own': [[5, 6, 7], [6, 7, 8], [7, 8, 9]],  # array - gets time slider
-        'z': [1, 2, 3],                               # scalar - plotted vs time
-        'error': [0.5, 0.3, 0.1]                      # scalar - plotted vs time
-    }
-    
-    df = pd.DataFrame(test)
-    
-    print("DataFrame:")
-    print(df)
-    print()
-    
-    df_to_html_plots(df, time_col='time', output_file='test_output.html')
