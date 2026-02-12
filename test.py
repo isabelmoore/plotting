@@ -1,164 +1,156 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.io as pio
+
 def df_to_html_plots(df, time_col='time', output_file='report.html'):
     """
-    Export DataFrame to HTML with interactive plots.
-    
-    - Scalar columns: plotted as time series (value vs time)
-    - Array columns: each gets its own plot with index as x-axis, values as y-axis, time slider
+    Export DataFrame to a tall, vertically-stacked HTML report.
+    Unrolls arrays into time-series plots with specific unit labels.
     """
     times = df[time_col].tolist()
     
-    # Detect scalar vs array columns
-    scalar_cols = []
-    array_cols = []
-    
+    # Mapping: (start_index, end_index, Label, Unit)
+    ARRAY_MAPPINGS = {
+        'x_own': [
+            (0, 3, "ECI Position", "m"),
+            (3, 6, "ECI Velocity", "m/s"),
+            (6, 7, "Mass", "kg"),
+            (7, 11, "Orientation Quaternion", "unitless"),
+            (11, 14, "Angular Velocity", "rad/s")
+        ]
+    }
+
+    plot_blocks = []
+    toc_links = []
+    first_plot = True
+
+    def apply_tall_layout(fig, title_text, unit_text):
+        fig.update_layout(
+            title=f"<b>{title_text}</b>",
+            xaxis_title="Time",
+            yaxis_title=f"Value ({unit_text})" if unit_text else "Value",
+            height=600, 
+            template="plotly_white",
+            margin=dict(l=60, r=40, t=80, b=60),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            dragmode="zoom"
+        )
+
+    def create_trace(x, y, name):
+        return go.Scatter(x=x, y=y, name=name, mode='lines+markers', line=dict(width=2))
+
     for col in df.columns:
         if col == time_col:
             continue
         
         first_val = df[col].iloc[0]
-        
-        # Check if it's an array/list with length > 1
-        if isinstance(first_val, (list, np.ndarray)) and len(np.array(first_val).flatten()) > 1:
-            array_cols.append(col)
-        else:
-            scalar_cols.append(col)
-    
-    print(f"Scalar columns (plot vs time): {scalar_cols}")
-    print(f"Array columns (slider for time): {array_cols}")
-    
-    all_figs = []
-    
-    # --- Scalar columns: value vs time ---
-    for col in scalar_cols:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=times, 
-            y=df[col].tolist(), 
-            mode='lines+markers',
-            line=dict(width=2),
-            marker=dict(size=6)
-        ))
-        fig.update_layout(
-            title=col,
-            xaxis_title='Time',
-            yaxis_title=col,
-            height=300
-        )
-        all_figs.append(('scalar', col, fig))
-    
-    # --- Array columns: index as x, values as y, time slider ---
-    for col in array_cols:
-        all_data = [np.array(df[col].iloc[t]).flatten().tolist() for t in range(len(times))]
-        x_vals = list(range(len(all_data[0])))
-        
-        # Calculate y range across all time steps
-        all_vals = np.concatenate([np.array(arr) for arr in all_data])
-        y_min, y_max = float(all_vals.min()), float(all_vals.max())
-        padding = 0.1 * (y_max - y_min) if y_max != y_min else 1
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=x_vals, 
-            y=all_data[0], 
-            mode='lines+markers',
-            line=dict(width=2),
-            marker=dict(size=6)
-        ))
-        
-        # For large datasets, reduce number of frames (max ~500 frames)
-        n_times_total = len(times)
-        if n_times_total > 500:
-            frame_step = n_times_total // 500
-            frame_indices = list(range(0, n_times_total, frame_step))
-        else:
-            frame_indices = list(range(n_times_total))
-        
-        # Create frames for animation
-        frames = [go.Frame(data=[go.Scatter(x=x_vals, y=all_data[i])], name=str(i)) 
-                  for i in frame_indices]
-        fig.frames = frames
-        
-        # Slider steps match the frame indices
-        steps = [dict(
-            args=[[str(i)], dict(frame=dict(duration=0, redraw=True), mode='immediate')],
-            label=f"{times[i]:.1f}" if isinstance(times[i], float) else str(times[i]), 
-            method='animate'
-        ) for i in frame_indices]
-        
-        fig.update_layout(
-            title=col,
-            xaxis_title='Index',
-            yaxis_title='Value',
-            yaxis_range=[y_min - padding, y_max + padding],
-            height=400,
-            updatemenus=[dict(
-                type='buttons', showactive=False, y=-0.15, x=0.1,
-                buttons=[
-                    dict(label='▶ Play', method='animate',
-                         args=[None, dict(
-                             frame=dict(duration=50, redraw=True),
-                             transition=dict(duration=30, easing='linear'),
-                             fromcurrent=True,
-                             mode='immediate'
-                         )]),
-                    dict(label='⏸ Pause', method='animate',
-                         args=[[None], dict(frame=dict(duration=0), mode='immediate')])
-                ]
-            )],
-            sliders=[dict(
-                active=0,
-                currentvalue=dict(prefix='Time: ', visible=True),
-                pad=dict(t=50),
-                len=0.8,
-                x=0.1,
-                y=-0.05,
-                transition=dict(duration=30, easing='linear'),
-                steps=steps
-            )]
-        )
-        all_figs.append(('array', col, fig))
-    
-    # Build HTML
-    html = '''<!DOCTYPE html>
-<html><head><title>Data Report</title>
-<style>
-body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
-h1 { text-align: center; }
-h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; margin-top: 40px; }
-.plot-container { background: white; border-radius: 8px; padding: 15px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        is_array = isinstance(first_val, (list, np.ndarray)) and len(np.array(first_val).flatten()) > 1
 
-/* Hover effects for Plotly buttons */
-.modebar-btn:hover { background-color: #ddd !important; }
-.updatemenu-button:hover { background-color: #e0e0e0 !important; cursor: pointer !important; }
-.slider-grip:hover { fill: #888 !important; cursor: grab !important; }
-</style>
-</head><body>
-<h1>Data Report</h1>
-'''
-    
-    first_plot = True
-    
-    # Add scalar plots (value vs time)
-    scalar_figs = [f for f in all_figs if f[0] == 'scalar']
-    if scalar_figs:
-        html += '<h2>Scalar Values Over Time</h2>\n'
-        for typ, col, fig in scalar_figs:
-            include_js = first_plot
+        if not is_array:
+            fig = go.Figure(create_trace(times, df[col].tolist(), col))
+            apply_tall_layout(fig, f"Scalar: {col}", None)
+            plot_id = f"plot_{col}"
+            toc_links.append(f'<li><a href="#{plot_id}">{col}</a></li>')
+            plot_blocks.append((plot_id, pio.to_html(fig, full_html=False, include_plotlyjs=first_plot, div_id=plot_id+"_fig")))
             first_plot = False
-            html += f'<div class="plot-container">\n{pio.to_html(fig, full_html=False, include_plotlyjs=include_js)}\n</div>\n'
-    
-    # Add array plots (with time slider)
-    array_figs = [f for f in all_figs if f[0] == 'array']
-    if array_figs:
-        html += '<h2>Array Data (Use Time Slider)</h2>\n'
-        for typ, col, fig in array_figs:
-            include_js = first_plot
+
+        elif col.lower() in ARRAY_MAPPINGS:
+            data_matrix = np.array(df[col].tolist())
+            for start, end, label, unit in ARRAY_MAPPINGS[col.lower()]:
+                fig = go.Figure()
+                for i in range(start, end):
+                    suffix = ["_X", "_Y", "_Z", "_W"][i-start] if (end-start) <= 4 else f"_{i}"
+                    fig.add_trace(create_trace(times, data_matrix[:, i], f"{label}{suffix}"))
+                
+                apply_tall_layout(fig, f"{col.upper()}: {label}", unit)
+                if "Quaternion" in label:
+                    fig.update_layout(yaxis_range=[-1.1, 1.1])
+
+                plot_id = f"plot_{col}_{start}"
+                toc_links.append(f'<li><a href="#{plot_id}">{col.upper()}: {label}</a></li>')
+                plot_blocks.append((plot_id, pio.to_html(fig, full_html=False, include_plotlyjs=first_plot, div_id=plot_id+"_fig")))
+                first_plot = False
+
+        else:
+            data_matrix = np.array(df[col].tolist())
+            fig = go.Figure()
+            for i in range(data_matrix.shape[1]):
+                fig.add_trace(create_trace(times, data_matrix[:, i], f"{col}[{i}]"))
+            
+            apply_tall_layout(fig, f"Array: {col}", "units")
+            plot_id = f"plot_{col}"
+            toc_links.append(f'<li><a href="#{plot_id}">{col}</a></li>')
+            plot_blocks.append((plot_id, pio.to_html(fig, full_html=False, include_plotlyjs=first_plot, div_id=plot_id+"_fig")))
             first_plot = False
-            html += f'<div class="plot-container">\n{pio.to_html(fig, full_html=False, include_plotlyjs=include_js)}\n</div>\n'
-    
-    html += '</body></html>'
+
+    # Note: Double {{ }} are ONLY needed here because this is an f-string
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Mission Telemetry Report</title>
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; display: flex; margin: 0; background: #f4f7f9; }}
+            #sidebar {{ width: 300px; background: #2c3e50; color: white; height: 100vh; overflow-y: auto; position: fixed; padding: 20px; box-sizing: border-box; }}
+            #main {{ margin-left: 300px; padding: 40px; width: calc(100% - 300px); }}
+            #sidebar h2 {{ font-size: 1.2em; border-bottom: 1px solid #555; padding-bottom: 10px; }}
+            #sidebar ul {{ list-style: none; padding: 0; }}
+            #sidebar a {{ color: #bdc3c7; text-decoration: none; font-size: 0.85em; display: block; padding: 8px 0; border-bottom: 1px solid #3e4f5f; }}
+            #sidebar a:hover {{ color: white; background: #34495e; padding-left: 5px; transition: 0.2s; }}
+            .plot-card {{ background: white; padding: 20px; margin-bottom: 50px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); scroll-margin-top: 20px; }}
+            h1 {{ color: #2c3e50; margin-top: 0; }}
+        </style>
+    </head>
+    <body>
+        <div id="sidebar">
+            <h2>Telemetry Index</h2>
+            <ul>{''.join(toc_links)}</ul>
+        </div>
+        <div id="main">
+            <h1>Mission Data Report</h1>
+            {''.join([f'<div id="{pid}" class="plot-card">{phtml}</div>' for pid, phtml in plot_blocks])}
+        </div>
+
+        <script>
+            window.onload = function() {{
+                var plots = document.querySelectorAll('.js-plotly-plot');
+                for (var i = 0; i < plots.length; i++) {{
+                    plots[i].on('plotly_relayout', function(eventdata) {{
+                        if (eventdata['xaxis.range[0]'] || eventdata['xaxis.autorange']) {{
+                            var update = {{
+                                'xaxis.range[0]': eventdata['xaxis.range[0]'],
+                                'xaxis.range[1]': eventdata['xaxis.range[1]'],
+                                'xaxis.autorange': eventdata['xaxis.autorange']
+                            }};
+                            plots.forEach(function(p) {{
+                                if (p !== event.target) {{ Plotly.relayout(p, update); }}
+                            }});
+                        }}
+                    }});
+                }}
+            }};
+        </script>
+    </body>
+    </html>
+    """
     
     with open(output_file, 'w') as f:
-        f.write(html)
-    
-    print(f"Saved to {output_file}")
+        f.write(html_content)
+    print(f"Report generated: {output_file}")
+
+if __name__ == "__main__":
+    # Fixed test data: Normal single braces here!
+    test_data = {
+        'time': np.linspace(0, 10, 50),
+        'x_own': [np.random.randn(14) for _ in range(50)],
+        'battery_voltage': np.random.uniform(11, 12.6, 50)
+    }
+    df = pd.DataFrame(test_data)
+    df_to_html_plots(df, output_file='telemetry_report.html')
